@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (QApplication, QFileDialog, QInputDialog, QLabel, 
 from .. import SPEC_VERSION, __version__
 from ..project import PROJECT_FILE, Project
 from .common import STYLE, Worker, error_box, label, start_worker
-from .phase2 import CompareTab, ProfilesTab, QcTab
+from .phase2 import CompareTab, DfmTab, ProfilesTab, QcTab
 from .tabs import ClipTab, FacesTab, GuideTab, MediaTab, ProjectTab
 
 APP_NAME = "顔置き換えコンパニオン"
@@ -41,11 +41,13 @@ class MainWindow(QMainWindow):
         self.compare_tab = CompareTab(self)
         self.qc_tab = QcTab(self)
         self.profiles_tab = ProfilesTab(self)
+        self.dfm_tab = DfmTab(self)
         self.guide_tab = GuideTab(self)
         for w, t in ((self.project_tab, "プロジェクト"), (self.media_tab, "素材"),
                      (self.clip_tab, "テスト用クリップ"), (self.faces_tab, "顔素材"),
                      (self.compare_tab, "比較"), (self.qc_tab, "品質チェック"),
-                     (self.profiles_tab, "シーン別の設定"), (self.guide_tab, "撮影ガイドと利用条件")):
+                     (self.profiles_tab, "シーン別の設定"), (self.dfm_tab, "DFM 学習素材"),
+                     (self.guide_tab, "撮影ガイドと利用条件")):
             self.tabs.addTab(w, t)
         self.tabs.currentChanged.connect(lambda _i: self.clip_tab.stop_play())
         self.stack.addWidget(self.tabs)
@@ -148,7 +150,7 @@ class MainWindow(QMainWindow):
         if not self.project:
             return
         for t in (self.project_tab, self.media_tab, self.clip_tab, self.faces_tab, self.compare_tab, self.qc_tab,
-                  self.profiles_tab, self.guide_tab):
+                  self.profiles_tab, self.dfm_tab, self.guide_tab):
             t.reload()
         if select_source is not None and self.media_tab.list.count():
             self.media_tab.list.setCurrentRow(select_source % self.media_tab.list.count())

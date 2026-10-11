@@ -396,3 +396,106 @@ def test_cli_phase2(p2, capsys):
     assert len(res["facefusion"]) == 2 and res["comparison"]["video"].endswith(".mp4")
     assert main(["profiles", root]) == 0
     assert (project.root / "export" / "scene_profiles.md").exists()
+
+
+# =====================================================================
+# M8：DFM の学習用素材
+# =====================================================================
+def test_crop_square_pads_outside_and_limits_size():
+    from vfc_companion.dfm import crop_square
+
+    img = np.full((100, 200, 3), 200, np.uint8)
+    c = crop_square(img, [-10, -10, 30, 30], 2.0, 1024)   # 枠の 2 倍 = 80px、左上がはみ出す
+    assert c.shape == (80, 80, 3)
+    assert c[0, 0].tolist() == [0, 0, 0] and c[-1, -1].tolist() == [200, 200, 200]
+    big = crop_square(np.zeros((2000, 2000, 3), np.uint8), [500, 500, 1300, 1300], 2.0, 512)
+    assert big.shape == (512, 512, 3)
+
+
+def test_dfm_collect_from_clean_frames(p2):
+    from vfc_companion.dfm import candidate_frames, collect, eligible_reports
+    from vfc_companion.facefusion import register_render
+    from vfc_companion.qc import load_metrics, run_qc
+
+    project, clip, person = p2
+    # 入力をそのまま写した出力を「問題なし」にするため、基準をゆるめる（テスト用）
+    for k, v in {"qc_step": 3, "qc_min_sim_faceset": -1.0, "qc_max_sim_original": 1.01, "qc_max_flicker": 2.0,
+                 "qc_max_reappear_delta": 2.0, "dfm_min_face_px": 20, "dfm_min_sim_faceset": -1.0,
+                 "dfm_max_per_bin": 3, "dfm_min_sharpness": 0.0}.items():
+        project.set_setting(k, v)
+    f = project.root / "renders" / "visomaster" / "clean.mp4"
+    shutil.copy(project.abs(clip["file"]), f)
+    r = register_render(project, clip["id"], f)
+    q = run_qc(project, r["id"])
+    m = load_metrics(project, q["id"])
+    assert m["problem_frames"] == 0
+    # 顔があるのは 0-29 と 60-89。3 フレームおきに調べ、5 フレーム以上あけて選ぶ
+    assert candidate_frames(m, person["id"], 5) == [0, 6, 12, 18, 24, 60, 66, 72, 78, 84]
+    assert [x["id"] for x in eligible_reports(project, person["id"])] == [q["id"]]
+
+    rec = collect(project, person["id"], [q["id"]])
+    root = project.abs(rec["dir"])
+    src = sorted((root / "data_src").glob("*.jpg"))
+    dst = sorted((root / "data_dst").glob("*.jpg"))
+    # 静止画の動画なので全部同じ角度。1 つの角度に 3 枚まで残し、写真 2 枚は必ず残す
+    assert rec["src_photos"] == 2 and rec["src_frames"] == 3 and len(src) == 5
+    assert rec["dst_frames"] == 3 and len(dst) == 3
+    assert rec["skipped"]["pruned"] == 14
+    assert rec["src_coverage"]["total"] == 5 and rec["src_coverage"]["warnings"]
+    for p in [x for x in src if not x.name.startswith("photo_")] + dst:
+        h, w = cv2_size(p)
+        assert h == w and h <= 1024
+    man = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+    assert len(man["src"]) == 5 and all((project.root / it["file"]).exists() for it in man["src"] + man["dst"])
+    assert (root / "次にやること.txt").exists()
+    assert project.data["dfm_sets"][-1]["id"] == rec["id"]
+    ex = rec["src_coverage"]["expressions"]
+    assert ex["measured"] >= 3 and any("表情" in w or "口を開けた" in w for w in rec["src_coverage"]["warnings"])
+
+
+def test_dfm_cli_without_dst(p2, capsys):
+    from vfc_companion.cli import main
+    from vfc_companion.facefusion import register_render
+    from vfc_companion.qc import run_qc
+
+    project, clip, person = p2
+    for k, v in {"qc_step": 6, "qc_min_sim_faceset": -1.0, "qc_max_sim_original": 1.01, "qc_max_flicker": 2.0,
+                 "qc_max_reappear_delta": 2.0, "dfm_min_face_px": 20, "dfm_min_sim_faceset": -1.0}.items():
+        project.set_setting(k, v)
+    f = project.root / "renders" / "visomaster" / "clean.mp4"
+    shutil.copy(project.abs(clip["file"]), f)
+    q = run_qc(project, register_render(project, clip["id"], f)["id"])
+    project.save()
+    assert main(["dfm-collect", str(project.root), person["id"], q["id"], "--no-dst"]) == 0
+    rec = json.loads(capsys.readouterr().out)
+    assert rec["dst_frames"] == 0 and rec["src_frames"] > 0 and rec["dst_coverage"] is None
+    assert not (project.root / rec["dir"] / "data_dst").exists()
+
+
+def test_expression_from_landmarks(face_images):
+    import cv2
+
+    from vfc_companion.config import DEFAULT_SETTINGS
+    from vfc_companion.dfm import expression
+    from vfc_companion.faces import detect
+
+    img = cv2.imread(str(face_images["single_big"]))
+    face = detect(img)[0]
+    e = expression(face, DEFAULT_SETTINGS)
+    assert e is not None and not e["mouth_open"] and 0.15 < e["ear"] < 0.45
+    lm = face.lmk68.copy()
+    c = lm[60:68, 1].mean()
+    lm[60:68, 1] = c + (lm[60:68, 1] - c) * 8          # 口を縦に大きく開いたことにする
+    lm[[41, 40, 47, 46]] = lm[[37, 38, 43, 44]]           # 下まぶたを上まぶたに重ねる（目を閉じたことにする）
+    face.lmk68 = lm
+    e2 = expression(face, DEFAULT_SETTINGS)
+    assert e2["mouth_open"] and e2["eyes_narrow"]
+    face.yaw = 60.0
+    assert expression(face, DEFAULT_SETTINGS) is None
+
+
+def cv2_size(path):
+    import cv2
+
+    img = cv2.imdecode(np.fromfile(str(path), np.uint8), cv2.IMREAD_COLOR)
+    return img.shape[:2]

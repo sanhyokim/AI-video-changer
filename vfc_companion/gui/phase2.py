@@ -1160,3 +1160,205 @@ class ProfilesTab(QWidget):
         p.log("scene_profiles_exported", {"file": p.rel(out)})
         self.win.statusBar().showMessage(f"書き出しました: {out}", 10000)
         _open(out.parent)
+
+
+# =====================================================================
+# DFM の学習用素材（M8）
+# =====================================================================
+DFM_GUIDE_HTML = """
+<p><b>DFM</b> は DeepFaceLab で学習する AI 人物専用の顔交換モデルです。VisoMaster Fusion の Swapper Model で
+「DeepFaceLive (DFM)」を選ぶと使えます。ここでは学習に使う顔の画像を集めます。</p>
+<ul>
+<li><b>data_src</b>（AI 人物の顔）：顔素材の写真と、品質チェックで問題がなかったフレームの出力から切り出した顔</li>
+<li><b>data_dst</b>（置き換える前の顔）：同じフレームの元の動画から切り出した顔。誰にでも使える方式（RTM）では、
+大勢の顔のセット（RTM WF Faceset）に足して使います</li>
+</ul>
+<p>力む・苦しい表情を再現するには、data_src にも同じような表情が要ります。表情の強い顔が少ないと警告が出ます。
+学習の手順はツールの <code>docs/dfm_training.md</code> にあります。</p>
+"""
+
+
+class DfmTab(QWidget):
+    def __init__(self, win: "MainWindow"):
+        super().__init__()
+        from PySide6.QtWidgets import QTextBrowser
+
+        self.win = win
+        root = QHBoxLayout(self)
+        split = QSplitter()
+        root.addWidget(split)
+
+        left = QWidget()
+        lv = QVBoxLayout(left)
+        prow = QHBoxLayout()
+        prow.addWidget(QLabel("AI 人物"))
+        self.person_combo = QComboBox()
+        self.person_combo.currentIndexChanged.connect(lambda _i: self._fill_reports())
+        prow.addWidget(self.person_combo, 1)
+        lv.addLayout(prow)
+        lv.addWidget(QLabel("素材にする品質チェックの結果（問題がなかったフレームだけを使う）"))
+        self.reports = QListWidget()
+        lv.addWidget(self.reports, 1)
+        self.chk_dst = QCheckBox("置き換える前の顔（data_dst）も集める")
+        self.chk_dst.setChecked(True)
+        lv.addWidget(self.chk_dst)
+        self.btn_run = QPushButton("学習用の素材を集める")
+        self.btn_run.setObjectName("primary")
+        self.btn_run.clicked.connect(self._run)
+        lv.addWidget(self.btn_run)
+        lv.addWidget(QLabel("集めた素材"))
+        self.sets = _table(["作成", "AI の顔", "元の顔", "警告"], 3)
+        self.sets.currentCellChanged.connect(lambda r, *_: self._show_set(r))
+        lv.addWidget(self.sets, 1)
+        split.addWidget(left)
+
+        right = QWidget()
+        rv = QVBoxLayout(right)
+        self.summary = label("")
+        self.summary.setStyleSheet("font-size: 15px; font-weight: bold;")
+        rv.addWidget(self.summary)
+        rv.addWidget(QLabel("AI の顔（data_src）の角度ごとの枚数（行：左右、列：上下）"))
+        self.grid = QTableWidget(0, 0)
+        self.grid.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.grid.setMaximumHeight(210)
+        rv.addWidget(self.grid)
+        self.expr = label("")
+        rv.addWidget(self.expr)
+        self.warn = QListWidget()
+        self.warn.setMaximumHeight(120)
+        self.warn.setStyleSheet("color: #f0b54a;")
+        rv.addWidget(self.warn)
+        brow = QHBoxLayout()
+        bopen = QPushButton("フォルダを開く")
+        bopen.clicked.connect(self._open_set)
+        brow.addWidget(bopen)
+        brow.addStretch(1)
+        rv.addLayout(brow)
+        guide = QTextBrowser()
+        guide.setHtml(DFM_GUIDE_HTML)
+        rv.addWidget(guide, 1)
+        split.addWidget(right)
+        split.setSizes([480, 840])
+
+    def reload(self) -> None:
+        keep = self.person_combo.currentData()
+        self.person_combo.blockSignals(True)
+        self.person_combo.clear()
+        for p in self.win.project.data["persons"]:
+            self.person_combo.addItem(p["name"], p["id"])
+        self.person_combo.blockSignals(False)
+        if self.person_combo.count():
+            self.person_combo.setCurrentIndex(max(0, self.person_combo.findData(keep)) if keep else 0)
+        self._fill_reports()
+
+    def _pid(self) -> str | None:
+        return self.person_combo.currentData()
+
+    def _fill_reports(self) -> None:
+        from .. import dfm
+
+        self.reports.clear()
+        pid = self._pid()
+        self.btn_run.setEnabled(pid is not None)
+        if not pid:
+            self.summary.setText("顔素材の画面で AI 人物を追加してください。")
+            self._fill_sets()
+            return
+        p = self.win.project
+        renders = {r["id"]: r for r in p.data.get("renders", [])}
+        for q in dfm.eligible_reports(p, pid):
+            r = renders.get(q["render_id"], {})
+            verdict = "判定不可" if q["pass"] is None else ("目安内" if q["pass"] else "要確認")
+            ok = q["target_frames"] - q["problem_frames"]
+            it = QListWidgetItem(f"{q['created_at'][:16].replace('T', ' ')}　{_render_label(r) if r else q['render_id']}　"
+                                 f"{verdict}　問題なし {ok}/{q['target_frames']} フレーム")
+            it.setData(Qt.UserRole, q["id"])
+            it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
+            it.setCheckState(Qt.Checked if q.get("judged_good") or q["pass"] else Qt.Unchecked)
+            self.reports.addItem(it)
+        self._fill_sets()
+
+    def _checked(self) -> list[str]:
+        return [self.reports.item(i).data(Qt.UserRole) for i in range(self.reports.count())
+                if self.reports.item(i).checkState() == Qt.Checked]
+
+    def _fill_sets(self) -> None:
+        pid = self._pid()
+        rows = [d for d in reversed(self.win.project.data.get("dfm_sets", [])) if d["person_id"] == pid]
+        self.set_rows = rows
+        self.sets.blockSignals(True)
+        self.sets.setRowCount(len(rows))
+        for i, d in enumerate(rows):
+            self.sets.setItem(i, 0, _ro(d["created_at"][:16].replace("T", " ")))
+            self.sets.setItem(i, 1, _ro(f"{d['src_photos'] + d['src_frames']}（写真 {d['src_photos']}）"))
+            self.sets.setItem(i, 2, _ro(d["dst_frames"] if d.get("include_dst") else "—"))
+            self.sets.setItem(i, 3, _ro(len(d["src_coverage"]["warnings"])))
+        self.sets.blockSignals(False)
+        if rows:
+            self.sets.setCurrentCell(0, 0)
+        self._show_set(0 if rows else -1)
+
+    def _show_set(self, row: int) -> None:
+        from ..faces import PITCH_BINS, YAW_BINS
+
+        rows = getattr(self, "set_rows", [])
+        d = rows[row] if 0 <= row < len(rows) else None
+        if not d:
+            if self._pid():
+                self.summary.setText("まだ素材を集めていません。品質チェックの結果を選んで「学習用の素材を集める」を押してください。")
+            self.grid.setRowCount(0)
+            self.grid.setColumnCount(0)
+            self.expr.setText("")
+            self.warn.clear()
+            return
+        sk = d["skipped"]
+        self.summary.setText(f"AI の顔 {d['src_photos'] + d['src_frames']} 枚（写真 {d['src_photos']}、出力から "
+                             f"{d['src_frames']}）　元の顔 {d['dst_frames'] if d.get('include_dst') else '—'} 枚")
+        cov = d["src_coverage"]
+        self.grid.setRowCount(len(YAW_BINS))
+        self.grid.setColumnCount(len(PITCH_BINS))
+        self.grid.setVerticalHeaderLabels([lbl for _k, lbl, *_ in YAW_BINS])
+        self.grid.setHorizontalHeaderLabels([lbl for _k, lbl, *_ in PITCH_BINS])
+        need = int(self.win.project.settings["dfm_min_per_bin"])
+        for r, (yk, *_a) in enumerate(YAW_BINS):
+            for c, (pk, *_b) in enumerate(PITCH_BINS):
+                n = cov["grid"][yk][pk]
+                it = _ro(n)
+                it.setTextAlignment(Qt.AlignCenter)
+                if n < need:
+                    it.setForeground(Qt.yellow if n else Qt.gray)
+                self.grid.setItem(r, c, it)
+        e = cov.get("expressions", {})
+        self.expr.setText(f"表情（測れた {e.get('measured', 0)} 枚のうち）：目を細める・閉じる {e.get('eyes_narrow', 0)} 枚、"
+                          f"口を開ける {e.get('mouth_open', 0)} 枚<br><span style='color:#9aa0aa'>外したもの：顔なし "
+                          f"{sk.get('no_face', 0)}、似ていない {sk.get('low_sim', 0)}、小さい {sk.get('small', 0)}、"
+                          f"ぼけ {sk.get('blurry', 0)}、似た角度の重複 {sk.get('pruned', 0)}、"
+                          f"別人に見える写真 {sk.get('dissimilar_photo', 0)}</span>")
+        self.warn.clear()
+        for w in cov["warnings"]:
+            self.warn.addItem("⚠ " + w)
+        if not cov["warnings"]:
+            self.warn.addItem("✓ 角度と表情の偏りは見つかりませんでした")
+
+    def _run(self) -> None:
+        from .. import dfm
+
+        pid, ids, dst = self._pid(), self._checked(), self.chk_dst.isChecked()
+        if not pid or not ids:
+            error_box(self, "品質チェックの結果を選んでください", "素材にする品質チェックの結果にチェックを付けてください。")
+            return
+
+        def job(progress):
+            rec = dfm.collect(self.win.project, pid, ids, include_dst=dst, progress=progress,
+                              should_stop=lambda: self.win.cancel_requested)
+            self.win.project.save()
+            return rec
+
+        self.win.run_job(job, "学習用の素材を集めています（初回はモデルを読み込みます）",
+                         on_done=lambda _r: self.win.reload_all(), cancellable=True)
+
+    def _open_set(self) -> None:
+        rows = getattr(self, "set_rows", [])
+        row = self.sets.currentRow()
+        if 0 <= row < len(rows):
+            _open(self.win.project.abs(rows[row]["dir"]))

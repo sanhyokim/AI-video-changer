@@ -45,6 +45,7 @@ class FaceResult:
     embedding: np.ndarray | None  # 正規化済み（長さ 1）
     kps: np.ndarray
     lmk106: np.ndarray | None
+    lmk68: np.ndarray | None = None   # 3D の 68 点（iBUG の並び。x, y, z）
 
     @property
     def width(self) -> float:
@@ -76,6 +77,7 @@ def detect(img_bgr: np.ndarray, min_score: float = 0.5, *, det_size: int = 640,
             embedding=None if emb is None else np.asarray(emb, dtype=np.float32),
             kps=np.asarray(f.kps, dtype=np.float32),
             lmk106=None if getattr(f, "landmark_2d_106", None) is None else np.asarray(f.landmark_2d_106),
+            lmk68=None if getattr(f, "landmark_3d_68", None) is None else np.asarray(f.landmark_3d_68),
         ))
     out.sort(key=lambda r: -r.size)
     return out

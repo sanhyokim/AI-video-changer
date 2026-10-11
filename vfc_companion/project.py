@@ -105,6 +105,7 @@ class Project:
             "comparisons": [],
             "qc_reports": [],
             "scene_profiles": {},
+            "dfm_sets": [],
             "history": [],
         }
         proj = cls(root, data)
@@ -126,7 +127,7 @@ class Project:
         for sub in FOLDERS:
             (root / sub).mkdir(parents=True, exist_ok=True)
         for key in ("sources", "persons", "clips", "render_versions", "renders", "comparisons", "qc_reports",
-                    "history"):
+                    "dfm_sets", "history"):
             data.setdefault(key, [])
         data.setdefault("settings", {})
         data.setdefault("scene_profiles", {})

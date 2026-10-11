@@ -128,6 +128,12 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("profiles", help="シーンプロファイルの記録を Markdown で表示し export/ に保存する")
     p.add_argument("root")
 
+    p = sub.add_parser("dfm-collect", help="品質チェックで問題がなかったフレームから DFM の学習用素材を集める（M8）")
+    p.add_argument("root")
+    p.add_argument("person_id")
+    p.add_argument("qc_ids", nargs="+")
+    p.add_argument("--no-dst", action="store_true", help="置き換える前の顔（data_dst）は集めない")
+
     args = ap.parse_args(argv)
 
     def say(i, n, text=""):
@@ -285,6 +291,14 @@ def main(argv: list[str] | None = None) -> int:
         out = proj.root / "export" / "scene_profiles.md"
         out.write_text(md, encoding="utf-8")
         print(md)
+    elif args.cmd == "dfm-collect":
+        from .dfm import collect
+
+        proj = Project.open(args.root)
+        rec = collect(proj, args.person_id, args.qc_ids, include_dst=not args.no_dst, progress=say)
+        proj.save()
+        print(file=sys.stderr)
+        _print(rec)
     return 0
 
 

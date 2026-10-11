@@ -219,4 +219,18 @@ def test_gui_phase2_flow(tmp_path, media_dir, face_images, monkeypatch):
     assert "決定" in pt.list.item(0).text()
     if shots:
         win.grab().save(os.path.join(shots, "profiles_tab.png"))
+
+    # DFM の学習用素材（この出力はすべて問題ありなので、写真だけが集まる）
+    dt = win.dfm_tab
+    win.tabs.setCurrentWidget(dt)
+    app.processEvents()
+    assert dt.reports.count() == 1
+    dt.reports.item(0).setCheckState(Qt.Checked)
+    dt._run()
+    assert _wait(app, lambda: not win.busy, 300)
+    assert dt.sets.rowCount() == 1 and "写真 2" in dt.summary.text()
+    warns = [dt.warn.item(i).text() for i in range(dt.warn.count())]
+    assert len(warns) >= 5 and any("不足" in w for w in warns)
+    if shots:
+        win.grab().save(os.path.join(shots, "dfm_tab.png"))
     win.close()

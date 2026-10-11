@@ -1,6 +1,6 @@
-# 顔置き換えコンパニオン（仕様書 v1.2 フェーズ 1・2）
+# 顔置き換えコンパニオン（仕様書 v1.2 フェーズ 1・2、M8）
 
-VisoMaster Fusion の前後の作業を自動化するツールです。仕様書 11 章の M1〜M6 と、10 章のシーンプロファイルの記録を実装しています。
+VisoMaster Fusion の前後の作業を自動化するツールです。仕様書 11 章の M1〜M6、M8 と、10 章のシーンプロファイルの記録を実装しています（M7 の書き出しの整理はまだです）。
 顔交換そのものは VisoMaster Fusion の画面で行い、このツールは VisoMaster Fusion の内部には触れません。
 
 ## できること
@@ -13,6 +13,7 @@ VisoMaster Fusion の前後の作業を自動化するツールです。仕様�
 | M4 顔素材の管理 | 人物ごとに写真をまとめて登録。顔が 1 つか、顔の大きさ 512px 以上か、メガネ（簡易判定）、向き（左右・上下・傾き）、写真どうしの似ている度合い（ArcFace）を検査。角度ごとの枚数と不足を表示。**S1 の確認にチェックしないと人物を登録できない** | 満たす（テスト済み） |
 | M5 比較動画 | ボタン 1 つで、FaceFusion を CLI（headless-run）で実行し、`renders/visomaster/` に置いた VisoMaster Fusion の出力を見つけ、元の動画と一緒にラベル付きで横並び（4 つなら 2×2）の比較動画と比較画像を作る。実行前に FaceFusion の `--help` と引数を照合する。2 人以上は基準フレームの顔の番号で人物を割り当てる。コンテンツ判定で止まったクリップは比較から外す（S4） | 満たす（偽の FaceFusion でテスト済み。本物での確認は未実施） |
 | M6 品質チェック | 出力を指定すると、検出漏れ、顔素材との似ている度合い、元の人物との似ている度合い、ちらつき、再び現れたときの一貫性、取り違えをフレームごとに計算し、HTML のレポートを作る。問題区間の一覧から時刻へ移動できる。目視の 6 項目はチェックリスト。「良い」と判断した出力から基準値を決め直せる | 満たす（テスト済み） |
+| M8 DFM の学習用素材 | 品質チェックで問題がなかったフレームから、AI 人物の顔（出力）と置き換える前の顔（元のクリップ）を切り出し、DeepFaceLab に渡せる data_src / data_dst のフォルダを作る。顔素材の写真も入れる。角度（左右×上下）ごとの枚数と、目を細めた顔・口を開けた顔の枚数を表示し、偏りを警告する。学習の手順は `docs/dfm_training.md` | 満たす（合成した動画でテスト済み。実際の動画では未確認） |
 | シーンプロファイル | P1〜P7 ごとに、VisoMaster Fusion で使う設定、メモ、根拠にした比較と品質チェックを記録し、Markdown のメモに書き出す。VisoMaster Fusion の設定は直接変えない（11.4） | — |
 
 ## Windows 11 での準備
@@ -48,7 +49,8 @@ buffalo_l は非商用の研究用ライセンスです（個人利用の範囲�
 7. 「比較」タブでクリップを選び、「比較を作る」を押す。2 人以上映るクリップでは、先に「顔のある最初のフレーム」で顔に番号を付け、番号ごとに置き換える人物を決める。できた比較動画と比較画像はタブの右側で開ける
 8. 「品質チェック」タブで出力を選んで「品質チェックを実行」。問題区間をクリックすると、元と出力を左右に並べてそのフレームを表示する（`←` `→` で 1 フレームずつ）。「レポートを開く」でブラウザ用のレポートを開ける。目視の 6 項目もここで記録する
 9. 目視でも「良い」と思えた出力ができたら、「良い出力として基準値を決める…」で基準値を決め直す
-10. 「シーン別の設定」タブで、場面の種類（P1〜P7）ごとに決めた VisoMaster Fusion の設定と根拠を記録し、「メモを書き出す」で `export\scene_profiles.md` に保存する
+10. 「DFM 学習素材」タブで AI 人物と品質チェックの結果を選び、「学習用の素材を集める」を押す。DeepFaceLab での学習と VisoMaster Fusion での使い方は `docs/dfm_training.md`
+11. 「シーン別の設定」タブで、場面の種類（P1〜P7）ごとに決めた VisoMaster Fusion の設定と根拠を記録し、「メモを書き出す」で `export\scene_profiles.md` に保存する
 
 ## 使い方（コマンドライン、AI エージェント向け）
 
@@ -71,6 +73,7 @@ python -m vfc_companion.cli compare D:\vfc\dance01 clip_xxxxxxxx
 python -m vfc_companion.cli qc D:\vfc\dance01 r_xxxxxxxx
 python -m vfc_companion.cli qc-calibrate D:\vfc\dance01 qc_xxxxxxxx --apply
 python -m vfc_companion.cli profiles D:\vfc\dance01
+python -m vfc_companion.cli dfm-collect D:\vfc\dance01 p_Aoi qc_xxxxxxxx qc_yyyyyyyy
 ```
 
 `assign` の書き方は `人物ID:基準フレーム:顔の番号`。顔の番号は基準フレームの顔を大きい順に並べたときの番号（0 から）です。
@@ -109,11 +112,13 @@ vfc_companion/
   qc.py           M6 品質チェックの計算と基準値の決め直し
   report.py       M6 HTML レポート
   profiles.py     シーンプロファイル（P1〜P7）の記録
+  dfm.py          M8 DFM の学習用素材（data_src / data_dst）を集める
   config.py       判定の基準値（初期値）
   cli.py          コマンドライン
   gui/            画面（PySide6）
 tests/            自動テスト（python -m pytest）。tests/fake_facefusion は FaceFusion の代わり
 docs/phase0_checks.md  15 章の確認結果（2026-10-09）
+docs/dfm_training.md   DFM（AI 人物専用モデル）の学習と VisoMaster Fusion での使い方
 docs/phase2_notes.md   フェーズ 2 で確かめたこと、未確認のこと、仕様書の版の違い（2026-10-11）
 docs/spec_v1.2.md      仕様書 v1.2（正とする版）
 ```
