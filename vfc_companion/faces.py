@@ -12,24 +12,27 @@ from typing import Any
 import numpy as np
 
 _lock = threading.Lock()
-_app = None
+_apps: dict[tuple, Any] = {}
+
+ALL_MODULES = ("detection", "landmark_3d_68", "landmark_2d_106", "recognition")
+# 品質チェック（M6）は向きを使わないので、検出と ArcFace だけにして速くする
+QC_MODULES = ("detection", "recognition")
 
 
-def get_app(det_size: int = 640):
-    """FaceAnalysis を 1 回だけ作る。初回はモデル（約 280MB）を自動でダウンロードする。"""
-    global _app
+def get_app(det_size: int = 640, modules: tuple[str, ...] = ALL_MODULES):
+    """FaceAnalysis を組み合わせごとに 1 回だけ作る。初回はモデル（約 280MB）を自動でダウンロードする。"""
+    key = (int(det_size), tuple(modules))
     with _lock:
-        if _app is None:
+        if key not in _apps:
             import onnxruntime as ort
             from insightface.app import FaceAnalysis
 
             avail = ort.get_available_providers()
             providers = [p for p in ("CUDAExecutionProvider", "CPUExecutionProvider") if p in avail]
-            app = FaceAnalysis(name="buffalo_l", providers=providers,
-                               allowed_modules=["detection", "landmark_3d_68", "landmark_2d_106", "recognition"])
+            app = FaceAnalysis(name="buffalo_l", providers=providers, allowed_modules=list(modules))
             app.prepare(ctx_id=0 if "CUDAExecutionProvider" in providers else -1, det_size=(det_size, det_size))
-            _app = app
-        return _app
+            _apps[key] = app
+        return _apps[key]
 
 
 @dataclass
@@ -56,8 +59,9 @@ class FaceResult:
         return max(self.width, self.height)
 
 
-def detect(img_bgr: np.ndarray, min_score: float = 0.5) -> list[FaceResult]:
-    app = get_app()
+def detect(img_bgr: np.ndarray, min_score: float = 0.5, *, det_size: int = 640,
+           modules: tuple[str, ...] = ALL_MODULES) -> list[FaceResult]:
+    app = get_app(det_size, modules)
     out = []
     for f in app.get(img_bgr):
         if float(f.det_score) < min_score:

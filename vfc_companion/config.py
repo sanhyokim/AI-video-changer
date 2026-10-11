@@ -38,6 +38,43 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # 上を向いた写真で「下向き」と表示されたら -1 にする。
     "pitch_up_sign": 1,
     "target_images_per_person": 20,    # 動きの多い動画なら 20 枚前後（仕様 9.2）
+
+    # --- M5: 比較動画（FaceFusion の CLI。引数は実行前に --help と照合する） ---
+    # FaceFusion の場所。facefusion.py のあるフォルダ。空なら環境変数 VFC_FACEFUSION_DIR を使う。
+    "facefusion_dir": "",
+    # FaceFusion を動かす Python。conda 環境の python.exe のパスか、
+    # 「conda run --no-capture-output -n facefusion python」のようなコマンド。空なら自動で探す。
+    "facefusion_python": "",
+    "ff_models": "alphaface_256,hyperswap_1a_256",   # 初期の比較（仕様 M5）
+    "ff_processors": "face_swapper,expression_restorer,face_enhancer",
+    "ff_face_landmarker_model": "hrffa",
+    "ff_face_enhancer_model": "gfpgan_1.4",          # FaceFusion の初期値
+    "ff_face_enhancer_blend": 30,      # 顔の補正は弱め（仕様 M5、10.1）。FaceFusion の初期値は 80【推測】
+    "ff_expression_restorer_factor": 80,             # FaceFusion の初期値
+    "ff_pixel_boost": "512x512",       # 画質優先（U2）。本番の 512 モードに合わせた【推測】
+    "ff_execution_providers": "auto",  # auto なら cuda があれば cuda、なければ cpu
+    "ff_reference_face_distance": 0.3,  # 仕様 M5 の初期値
+    "ff_face_selector_order": "large-small",          # FaceFusion の初期値
+    "ff_output_video_quality": 95,
+    "compare_panel_height": 1080,      # 比較動画の 1 枚分の高さ（4K を 4 枚並べると重いため）
+    "compare_image_count": 5,          # 比較画像を何か所で書き出すか
+
+    # --- M6: 品質チェック（基準値はすべて初期値。「良い」出力で決め直す：仕様 M6） ---
+    "qc_width": 1920,                  # 解析のときの縮小幅（px）
+    "qc_det_size": 640,                # 顔検出の入力サイズ。引きの画で顔が小さいなら 1024 などに【推測】
+    "qc_step": 1,                      # 何フレームごとに調べるか（1 = 全フレーム）
+    "qc_min_sim_faceset": 0.30,        # 顔素材との似ている度合いの下限【推測】
+    "qc_max_sim_original": 0.40,       # 元の人物との似ている度合いの上限（超えたら置き換え不足）【推測】
+    "qc_max_flicker": 0.12,            # 隣のフレームとの似ている度合いの変化の上限【推測】
+    "qc_max_reappear_delta": 0.10,     # 顔が消える前後での似ている度合いの差の上限【推測】
+    "qc_reappear_gap_frames": 3,       # これ以上顔が消えたら「再び現れた」とみなす
+    "qc_reappear_window_seconds": 0.5,  # 消える前後の比べる長さ
+    "qc_mismatch_margin": 0.05,        # 割り当てと違う人物のほうがこれ以上似ていたら取り違え【推測】
+    "qc_track_match": 0.35,            # 元の顔を基準の顔と同じ人とみなす似ている度合い【推測】
+    "qc_merge_gap_frames": 2,          # 問題のフレームがこの間隔以内なら 1 つの区間にまとめる
+    "qc_pass_ratio": 0.02,             # 問題区間が全体のこの割合以内なら合格（仕様 12.2）
+    "qc_calibration_percentile": 1.0,  # 基準値を決めるとき、良い出力の分布の何 % 点を使うか
+    "qc_calibration_margin": 0.02,     # 決めた値に持たせる余裕
 }
 
 

@@ -185,3 +185,72 @@ class Timeline(QWidget):
     def _emit(self, x: float) -> None:
         f = int(round((x - 1) / max(1, self.width() - 2) * self.total))
         self.seek.emit(max(0, min(self.total - 1, f)))
+
+
+class PairFetcher(QThread):
+    """複数の動画の同じフレームを読み、左右に並べた 1 枚を返す（品質チェックの区間確認用）。"""
+
+    ready = Signal(int, QImage)
+
+    def __init__(self):
+        super().__init__()
+        self._cv = threading.Condition()
+        self._req: tuple | None = None
+        self._quit = False
+        self._info: dict[str, tuple[float, int, int]] = {}
+
+    def request(self, paths: list[str], frame: int) -> None:
+        with self._cv:
+            self._req = (list(paths), frame)
+            self._cv.notify()
+
+    def stop(self) -> None:
+        with self._cv:
+            self._quit = True
+            self._cv.notify()
+        self.wait(3000)
+
+    def _media(self, path: str) -> tuple[float, int, int] | None:
+        if path not in self._info:
+            from ..media import probe
+
+            try:
+                mi = probe(path, None, measure_luma=False)
+            except Exception:  # noqa: BLE001
+                return None
+            self._info[path] = (mi.fps, mi.display_width, mi.display_height)
+        return self._info[path]
+
+    def run(self) -> None:
+        import cv2
+        import numpy as np
+
+        while True:
+            with self._cv:
+                while self._req is None and not self._quit:
+                    self._cv.wait()
+                if self._quit:
+                    return
+                req, self._req = self._req, None
+            paths, frame = req
+            imgs = []
+            for p in paths:
+                m = self._media(p)
+                img = read_frame(p, frame, m[0], m[1], m[2], max_width=PREVIEW_WIDTH) if m else None
+                imgs.append(img)
+            h = max((i.shape[0] for i in imgs if i is not None), default=0)
+            if not h:
+                continue
+            tiles = []
+            for img in imgs:
+                if img is None:
+                    tiles.append(np.zeros((h, int(h * 16 / 9), 3), np.uint8))
+                    continue
+                if img.shape[0] != h:
+                    img = cv2.resize(img, (int(round(img.shape[1] * h / img.shape[0])), h))
+                tiles.append(img)
+            gap = np.zeros((h, 6, 3), np.uint8)
+            row = [tiles[0]]
+            for t in tiles[1:]:
+                row += [gap, t]
+            self.ready.emit(frame, bgr_to_qimage(np.hstack(row)))

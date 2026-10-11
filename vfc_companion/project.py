@@ -101,6 +101,10 @@ class Project:
             "persons": [],
             "clips": [],
             "render_versions": [],
+            "renders": [],
+            "comparisons": [],
+            "qc_reports": [],
+            "scene_profiles": {},
             "history": [],
         }
         proj = cls(root, data)
@@ -121,9 +125,11 @@ class Project:
         # 足りないフォルダを作り直す（手で消した場合など）
         for sub in FOLDERS:
             (root / sub).mkdir(parents=True, exist_ok=True)
-        for key in ("sources", "persons", "clips", "render_versions", "history"):
+        for key in ("sources", "persons", "clips", "render_versions", "renders", "comparisons", "qc_reports",
+                    "history"):
             data.setdefault(key, [])
         data.setdefault("settings", {})
+        data.setdefault("scene_profiles", {})
         return cls(root, data)
 
     # ---------- 保存と記録 ----------
@@ -186,6 +192,12 @@ class Project:
             if c["id"] == clip_id:
                 return c
         raise ProjectError(f"クリップが見つかりません: {clip_id}")
+
+    def render(self, render_id: str) -> dict[str, Any]:
+        for r in self.data["renders"]:
+            if r["id"] == render_id:
+                return r
+        raise ProjectError(f"出力が見つかりません: {render_id}")
 
     # ---------- 書き出しのバージョン（仕様 11.2 の最後の段落） ----------
     def add_render_version(self, *, source_id: str | None = None, clip_id: str | None = None,

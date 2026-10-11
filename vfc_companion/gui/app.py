@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (QApplication, QFileDialog, QInputDialog, QLabel, 
 from .. import SPEC_VERSION, __version__
 from ..project import PROJECT_FILE, Project
 from .common import STYLE, Worker, error_box, label, start_worker
+from .phase2 import CompareTab, ProfilesTab, QcTab
 from .tabs import ClipTab, FacesTab, GuideTab, MediaTab, ProjectTab
 
 APP_NAME = "顔置き換えコンパニオン"
@@ -27,7 +28,7 @@ class MainWindow(QMainWindow):
         self._worker: Worker | None = None
         self.qsettings = QSettings("vfc", "companion")
         self.setWindowTitle(APP_NAME)
-        self.resize(1400, 860)
+        self.resize(1440, 900)
 
         self.stack = QStackedWidget()
         self.setCentralWidget(self.stack)
@@ -37,10 +38,14 @@ class MainWindow(QMainWindow):
         self.media_tab = MediaTab(self)
         self.clip_tab = ClipTab(self)
         self.faces_tab = FacesTab(self)
+        self.compare_tab = CompareTab(self)
+        self.qc_tab = QcTab(self)
+        self.profiles_tab = ProfilesTab(self)
         self.guide_tab = GuideTab(self)
         for w, t in ((self.project_tab, "プロジェクト"), (self.media_tab, "素材"),
                      (self.clip_tab, "テスト用クリップ"), (self.faces_tab, "顔素材"),
-                     (self.guide_tab, "撮影ガイドと利用条件")):
+                     (self.compare_tab, "比較"), (self.qc_tab, "品質チェック"),
+                     (self.profiles_tab, "シーン別の設定"), (self.guide_tab, "撮影ガイドと利用条件")):
             self.tabs.addTab(w, t)
         self.tabs.currentChanged.connect(lambda _i: self.clip_tab.stop_play())
         self.stack.addWidget(self.tabs)
@@ -142,7 +147,8 @@ class MainWindow(QMainWindow):
     def reload_all(self, select_source: int | None = None) -> None:
         if not self.project:
             return
-        for t in (self.project_tab, self.media_tab, self.clip_tab, self.faces_tab, self.guide_tab):
+        for t in (self.project_tab, self.media_tab, self.clip_tab, self.faces_tab, self.compare_tab, self.qc_tab,
+                  self.profiles_tab, self.guide_tab):
             t.reload()
         if select_source is not None and self.media_tab.list.count():
             self.media_tab.list.setCurrentRow(select_source % self.media_tab.list.count())
@@ -204,6 +210,7 @@ class MainWindow(QMainWindow):
             e.ignore()
             return
         self.clip_tab.shutdown()
+        self.qc_tab.shutdown()
         super().closeEvent(e)
 
 

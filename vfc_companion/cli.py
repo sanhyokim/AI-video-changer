@@ -8,6 +8,11 @@
   python -m vfc_companion.cli cut D:\\vfc\\dance01 src_xxxx 600 1200
   python -m vfc_companion.cli add-person D:\\vfc\\dance01 "Aoi" --i-confirm-ai-generated
   python -m vfc_companion.cli add-faces D:\\vfc\\dance01 p_Aoi D:\\faces\\aoi\\*.png
+  python -m vfc_companion.cli ff-check D:\\vfc\\dance01
+  python -m vfc_companion.cli assign D:\\vfc\\dance01 clip_xxxx p_Aoi:0:0 p_Ren:0:1
+  python -m vfc_companion.cli compare D:\\vfc\\dance01 clip_xxxx
+  python -m vfc_companion.cli qc D:\\vfc\\dance01 r_xxxx
+  python -m vfc_companion.cli qc-calibrate D:\\vfc\\dance01 qc_xxxx --apply
 """
 
 from __future__ import annotations
@@ -79,7 +84,54 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("root")
     p.add_argument("person_id")
 
+    # ---- フェーズ 2（M5 比較、M6 品質チェック、シーンプロファイル） ----
+    p = sub.add_parser("ff-check", help="FaceFusion の場所とバージョンと --help を確かめる")
+    p.add_argument("root")
+
+    p = sub.add_parser("assign", help="クリップで置き換える人物を割り当てる（人物ID:基準フレーム:顔の位置）")
+    p.add_argument("root")
+    p.add_argument("clip_id")
+    p.add_argument("items", nargs="+", help="例: p_Aoi:0:0（基準フレームを省くと自動で探す）")
+    p.add_argument("--distance", type=float, default=None, help="似ている度合いの基準（初期値 0.3）")
+
+    p = sub.add_parser("ff-run", help="FaceFusion を 1 つの設定で実行する")
+    p.add_argument("root")
+    p.add_argument("clip_id")
+    p.add_argument("--model", help="顔交換モデル（省くと設定 ff_models の全部）")
+
+    p = sub.add_parser("find-vm", help="renders/visomaster/ の出力を探して登録する")
+    p.add_argument("root")
+    p.add_argument("clip_id", nargs="?")
+
+    p = sub.add_parser("register", help="出力の動画をクリップの結果として登録する")
+    p.add_argument("root")
+    p.add_argument("clip_id")
+    p.add_argument("file")
+    p.add_argument("--label", default="")
+    p.add_argument("--tool", default="visomaster")
+
+    p = sub.add_parser("compare", help="FaceFusion の実行から比較動画の作成までを一度に行う")
+    p.add_argument("root")
+    p.add_argument("clip_id")
+    p.add_argument("--no-facefusion", action="store_true", help="FaceFusion は実行せず、ある結果だけで比べる")
+    p.add_argument("--renders", nargs="*", help="並べる出力の ID（省くと自動）")
+
+    p = sub.add_parser("qc", help="出力の品質チェックをしてレポートを作る")
+    p.add_argument("root")
+    p.add_argument("render_id")
+
+    p = sub.add_parser("qc-calibrate", help="よい出力の品質チェック結果から基準値を決める")
+    p.add_argument("root")
+    p.add_argument("qc_ids", nargs="+")
+    p.add_argument("--apply", action="store_true", help="案をそのまま設定に反映する")
+
+    p = sub.add_parser("profiles", help="シーンプロファイルの記録を Markdown で表示し export/ に保存する")
+    p.add_argument("root")
+
     args = ap.parse_args(argv)
+
+    def say(i, n, text=""):
+        print(f"\r{text} {i}/{n}" if n else f"\r{text}", end="", file=sys.stderr)
 
     from .project import Project
 
@@ -147,6 +199,92 @@ def main(argv: list[str] | None = None) -> int:
         _print({"summary": person["summary"],
                 "images": [{"file": i["file"], "angle": i["analysis"].get("face", {}).get("yaw_label"),
                             "issues": issue_texts(i["analysis"], s)} for i in person["images"]]})
+    elif args.cmd == "ff-check":
+        from .facefusion import check_install
+
+        proj = Project.open(args.root)
+        info = check_install(proj)
+        proj.save()
+        _print({"version": info.version, "facefusion": proj.data["tools"]["facefusion"],
+                "face_swapper_models": info.choices.get("--face-swapper-model", []),
+                "execution_providers": info.choices.get("--execution-providers", [])})
+    elif args.cmd == "assign":
+        from .facefusion import set_assignments
+
+        proj = Project.open(args.root)
+        items = []
+        for it in args.items:
+            parts = it.split(":")
+            a = {"person_id": parts[0], "reference_frame": int(parts[1]) if len(parts) > 1 and parts[1] else None,
+                 "reference_face_position": int(parts[2]) if len(parts) > 2 and parts[2] else 0}
+            a["reference_face_distance"] = args.distance if args.distance is not None else \
+                proj.settings["ff_reference_face_distance"]
+            items.append(a)
+        set_assignments(proj, args.clip_id, items)
+        _print(proj.clip(args.clip_id)["assignments"])
+    elif args.cmd == "ff-run":
+        from .facefusion import default_variants, run_variant
+
+        proj = Project.open(args.root)
+        variants = default_variants(proj.settings)
+        if args.model:
+            variants = [{"name": f"ff_{args.model}", "face_swapper_model": args.model}]
+        out = []
+        for v in variants:
+            rec = run_variant(proj, args.clip_id, v, progress=say)
+            proj.save()
+            out.append(rec)
+        print(file=sys.stderr)
+        _print(out)
+    elif args.cmd == "find-vm":
+        from .facefusion import sync_visomaster
+
+        proj = Project.open(args.root)
+        recs = sync_visomaster(proj, args.clip_id)
+        proj.save()
+        _print(recs)
+    elif args.cmd == "register":
+        from .facefusion import register_render
+
+        proj = Project.open(args.root)
+        rec = register_render(proj, args.clip_id, args.file, tool=args.tool, label=args.label)
+        proj.save()
+        _print(rec)
+    elif args.cmd == "compare":
+        from .compare import make_comparison, run_one_button
+
+        proj = Project.open(args.root)
+        if args.renders:
+            res = {"comparison": make_comparison(proj, args.clip_id, render_ids=args.renders, progress=say)}
+        else:
+            res = run_one_button(proj, args.clip_id, run_facefusion=not args.no_facefusion, progress=say)
+        proj.save()
+        print(file=sys.stderr)
+        _print(res)
+    elif args.cmd == "qc":
+        from .qc import run_qc
+
+        proj = Project.open(args.root)
+        rec = run_qc(proj, args.render_id, progress=say)
+        proj.save()
+        print(file=sys.stderr)
+        _print(rec)
+    elif args.cmd == "qc-calibrate":
+        from .qc import apply_thresholds, propose_thresholds
+
+        proj = Project.open(args.root)
+        props = propose_thresholds(proj, args.qc_ids)
+        if args.apply:
+            apply_thresholds(proj, props, args.qc_ids)
+        _print({"applied": args.apply, "proposals": props})
+    elif args.cmd == "profiles":
+        from .profiles import export_markdown
+
+        proj = Project.open(args.root)
+        md = export_markdown(proj)
+        out = proj.root / "export" / "scene_profiles.md"
+        out.write_text(md, encoding="utf-8")
+        print(md)
     return 0
 
 
