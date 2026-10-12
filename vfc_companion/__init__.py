@@ -4,5 +4,5 @@ VisoMaster Fusion の外側の作業（プロジェクト管理、素材の検�
 切り出し、顔素材の管理）を自動化する。VisoMaster Fusion の内部には依存しない。
 """
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 SPEC_VERSION = "1.2"

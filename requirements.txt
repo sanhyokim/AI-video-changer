@@ -1,6 +1,6 @@
-# 2026-10-09 時点の最新版で動作を確認（Linux コンテナ）。Windows 11 での確認は未実施。
+# Linux コンテナの Python 3.11 でテストした版（2026-10-12）。Windows 用の部品が Python 3.11〜3.13 でそろうことは確認済み。Windows 11 での動作は未確認。
 PySide6==6.12.0
 insightface==2.1
-onnxruntime==1.29.0
+onnxruntime==1.31.0
 opencv-python==5.0.0.93
-numpy==2.5.3
+numpy==2.4.6
